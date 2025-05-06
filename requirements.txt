@@ -1,0 +1,10 @@
+transformers
+datasets
+accelerate
+torch
+tqdm
+tiktoken
+protobuf
+blobfile
+sentencepiece
+peft
