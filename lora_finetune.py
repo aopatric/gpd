@@ -6,7 +6,6 @@ from transformers import (
     AutoModelForCausalLM,
     TrainingArguments,
     Trainer,
-    default_data_collator,
 )
 from peft import (
     LoraConfig,
@@ -20,10 +19,10 @@ STUDENT_MODELNAME = "mtgv/MobileLLaMA-1.4B-Base"
 CHECKPOINT_DIR = "checkpoints/lora"
 BATCH_SIZE = 8
 SEQUENCE_LENGTH = 32
-EPOCHS = 3
-LR = 2e-4
+EPOCHS = 20
+LR = 2e-5
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
-LORA_RANK = 16
+LORA_RANK = 32
 LORA_ALPHA = 4 * LORA_RANK
 LORA_DROPOUT = 0.1
 
@@ -34,6 +33,11 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.float16,
     device_map="auto",
 ).to(DEVICE)
+
+# add pad token
+if tokenizer.pad_token_id is None:
+    tokenizer.pad_token = tokenizer.eos_token
+    model.config.pad_token_id = tokenizer.pad_token_id
 
 # lora setup
 lora_conf = LoraConfig(
@@ -67,7 +71,7 @@ def preprocess(example):
     }
 
 # preprocess dataset, or load from cache
-if not os.path.exists("data/distill_corpus_train.arrow"):
+if not os.path.exists("data/distill_corpus_train"):
     # load dataset
     dataset = load_dataset(
         "json",
@@ -94,17 +98,27 @@ if not os.path.exists("data/distill_corpus_train.arrow"):
         num_proc=4,
         desc="Preprocessing eval dataset",
     )
-    train_data.save_to_disk("data/distill_corpus_train.arrow")
-    eval_data.save_to_disk("data/distill_corpus_eval.arrow")
+    train_data.save_to_disk("data/distill_corpus_train")
+    eval_data.save_to_disk("data/distill_corpus_eval")
 
 else:
-    train_data = load_from_disk("data/distill_corpus_train.arrow")
-    eval_data = load_from_disk("data/distill_corpus_eval.arrow")
+    train_data = load_from_disk("data/distill_corpus_train")
+    eval_data = load_from_disk("data/distill_corpus_eval")
+
+train_data.set_format(
+    type="torch",
+    columns=["input_ids", "attention_mask", "teacher_logits"],
+)
+eval_data.set_format(
+    type="torch",
+    columns=["input_ids", "attention_mask", "teacher_logits"],
+)
 
 # custom trainer for our loss function
 class DistillationTrainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
-        teacher_logits = inputs.pop("teacher_logits").to(DEVICE)
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        teacher_logits = inputs["teacher_logits"].to(DEVICE)
+
         outputs = model(
             input_ids=inputs["input_ids"].to(DEVICE),
             attention_mask=inputs["attention_mask"].to(DEVICE),
@@ -131,14 +145,23 @@ args = TrainingArguments(
     save_steps=500,
     save_total_limit=2,
     fp16=True,
+    label_names=["teacher_logits"],
 )
+
+# custom collator
+def collate_fn(batch):
+    return {
+        "input_ids": torch.stack([torch.tensor(x["input_ids"]) for x in batch]),
+        "attention_mask": torch.stack([torch.tensor(x["attention_mask"]) for x in batch]),
+        "teacher_logits": torch.stack([torch.tensor(x["teacher_logits"]) for x in batch]),
+    }
 
 trainer = DistillationTrainer(
     model=model,
     args=args,
     train_dataset=train_data,
     eval_dataset=eval_data,
-    data_collator=default_data_collator,
+    data_collator=collate_fn,
 )
 
 trainer.train()
