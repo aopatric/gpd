@@ -16,8 +16,9 @@ from peft import (
 # params
 LOGIT_FILE = "data/distill_corpus.jsonl"
 STUDENT_MODELNAME = "mtgv/MobileLLaMA-1.4B-Base"
+TEACHER_MODELNAME = "meta-llama/Llama-2-7b-chat-hf"
 CHECKPOINT_DIR = "checkpoints/lora"
-BATCH_SIZE = 8
+BATCH_SIZE = 64
 SEQUENCE_LENGTH = 32
 EPOCHS = 20
 LR = 2e-5
@@ -27,12 +28,16 @@ LORA_ALPHA = 4 * LORA_RANK
 LORA_DROPOUT = 0.1
 
 # load tokenizer and student model
-tokenizer = AutoTokenizer.from_pretrained(STUDENT_MODELNAME)
+tokenizer = AutoTokenizer.from_pretrained(TEACHER_MODELNAME)
 model = AutoModelForCausalLM.from_pretrained(
     STUDENT_MODELNAME,
     torch_dtype=torch.float16,
     device_map="auto",
 ).to(DEVICE)
+model.resize_token_embeddings(len(tokenizer))
+# sanity check
+assert model.get_input_embeddings().weight.size(0) == len(tokenizer)
+
 
 # add pad token
 if tokenizer.pad_token_id is None:
@@ -140,12 +145,17 @@ args = TrainingArguments(
     gradient_accumulation_steps=1,
     num_train_epochs=EPOCHS,
     learning_rate=LR,
+    lr_scheduler_type="linear",
+    warmup_steps=500,
     logging_dir=os.path.join(CHECKPOINT_DIR, "logs"),
     logging_steps=50,
     save_steps=500,
-    save_total_limit=2,
+    save_total_limit=5,
     fp16=True,
     label_names=["teacher_logits"],
+    logging_strategy="steps",
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
 )
 
 # custom collator

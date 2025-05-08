@@ -15,6 +15,18 @@ STUDENT_BASE_NAME = "mtgv/MobileLLaMA-1.4B-Base"
 STUDENT_LORA_DIR = "checkpoints/lora/checkpoint-22500"
 PINGHEAD_DIR = "checkpoints/pinghead/pinghead.pt"
 
+def load_models(teacher_name, student_base_name, student_lora_dir, pinghead_dir):
+    """
+    Load the models from the specified directories.
+
+    Returns:
+        - tokenizer: The tokenizer for the teacher model.
+        - teacher: The teacher model.
+        - student_base: The base student model.
+        - student: The student model with LoRA.
+        - pinghead: The pinghead model.
+    """
+
 
 def main(
         prompt_dir,
